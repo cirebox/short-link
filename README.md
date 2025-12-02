@@ -1,8 +1,8 @@
 # Short-Link API
 
-[![CI/CD Pipeline](https://github.com/seu-usuario/short-link-teddy/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/seu-usuario/short-link-teddy/actions/workflows/ci-cd.yml)
-[![CodeQL](https://github.com/seu-usuario/short-link-teddy/actions/workflows/codeql.yml/badge.svg)](https://github.com/seu-usuario/short-link-teddy/actions/workflows/codeql.yml)
-[![codecov](https://codecov.io/gh/seu-usuario/short-link-teddy/branch/main/graph/badge.svg)](https://codecov.io/gh/seu-usuario/short-link-teddy)
+[![CI/CD Pipeline](https://github.com/cirebox/short-link-teddy/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/cirebox/short-link-teddy/actions/workflows/ci-cd.yml)
+[![CodeQL](https://github.com/cirebox/short-link-teddy/actions/workflows/codeql.yml/badge.svg)](https://github.com/cirebox/short-link-teddy/actions/workflows/codeql.yml)
+[![codecov](https://codecov.io/gh/cirebox/short-link-teddy/branch/main/graph/badge.svg)](https://codecov.io/gh/cirebox/short-link-teddy)
 
 API RESTful para encurtamento de URLs, desenvolvida com NestJS para o teste técnico da Teddy Open Finance.
 
@@ -61,15 +61,117 @@ npm run test
 
 ## Escalabilidade
 
-Para produção, considere:
-- Load balancer para múltiplas instâncias
-- Redis para cache de redirecionamentos
-- CDN para distribuição
-- Kubernetes para orquestração
+### Escalabilidade Horizontal
+A aplicação foi projetada para escalar horizontalmente através de múltiplas instâncias do serviço:
+
+**Soluções Implementadas:**
+- Stateless design: Todas as instâncias são idênticas e não mantêm estado local
+- Load balancer (NGINX/Haproxy) para distribuição de carga entre instâncias
+- Sessões JWT stateless, eliminando necessidade de sticky sessions
+- Banco PostgreSQL compartilhado com connection pooling
+
+**Desafios e Soluções:**
+- **Cache de redirecionamentos:** Implementar Redis para cache de URLs frequentemente acessadas, reduzindo latência de DB
+- **Rate limiting:** Usar Redis para controle de taxa por IP/usuário
+- **Logs centralizados:** ELK Stack (Elasticsearch, Logstash, Kibana) para monitoramento
+- **Orquestração:** Kubernetes com HPA (Horizontal Pod Autoscaler) para auto-scaling baseado em CPU/memória
+
+### Escalabilidade Vertical
+Para crescimento dentro de uma única instância:
+
+**Otimização de Recursos:**
+- Connection pooling com PostgreSQL (máx. 10 conexões por instância)
+- Lazy loading e otimização de queries com TypeORM
+- Compressão GZIP para respostas HTTP
+- CDN (Cloudflare/AWS CloudFront) para assets estáticos
+
+**Monitoramento:**
+- Métricas com Prometheus + Grafana
+- Health checks automáticos
+- APM (Application Performance Monitoring) com New Relic ou similar
+
+### Infraestrutura Recomendada
+- **Desenvolvimento:** Docker Compose local
+- **Staging:** Kubernetes com 2-3 réplicas
+- **Produção:** Kubernetes com auto-scaling (3+ réplicas mínimas)
+- **Banco:** PostgreSQL managed (AWS RDS, Google Cloud SQL) com read replicas
+- **Cache:** Redis Cluster para alta disponibilidade
+
+### Estimativa de Capacidade
+- 1 instância: ~500 req/s (com cache)
+- 3 instâncias: ~1500 req/s
+- Com CDN + cache: 10k+ req/s para redirecionamentos
 
 ## Arquitetura
 
-![Diagrama](architecture.png)  # Adicionar imagem do diagrama
+```mermaid
+graph TB
+    A[Client] --> B[Load Balancer]
+    B --> C[API Instance 1]
+    B --> D[API Instance 2]
+    B --> E[API Instance N]
+    
+    C --> F[JWT Auth]
+    D --> F
+    E --> F
+    
+    F --> G[Shorten Service]
+    F --> H[Auth Service]
+    F --> I[Health Service]
+    
+    G --> J[Prisma ORM]
+    H --> J
+    I --> J
+    
+    J --> K[PostgreSQL]
+    
+    G --> L[Redis Cache]
+    L --> M[URL Cache]
+    
+    A --> N[CDN]
+    N --> O[Static Assets]
+    
+    P[Monitoring] --> C
+    P --> D
+    P --> E
+    P --> K
+    P --> L
+    
+    subgraph "Kubernetes Cluster"
+        B
+        C
+        D
+        E
+        J
+        L
+    end
+    
+    subgraph "External Services"
+        K
+        N
+        P
+    end
+```
+
+**Componentes da Arquitetura:**
+
+- **Client**: Aplicações frontend ou APIs externas
+- **Load Balancer**: Distribui requisições entre instâncias (NGINX/HAProxy)
+- **API Instances**: Instâncias stateless da aplicação NestJS
+- **JWT Auth**: Autenticação baseada em tokens JWT
+- **Services**: Módulos de negócio (Shorten, Auth, Health)
+- **Prisma ORM**: Camada de acesso a dados com PostgreSQL
+- **Redis Cache**: Cache para redirecionamentos frequentes
+- **CDN**: Distribuição de conteúdo estático
+- **Monitoring**: Stack de observabilidade (Prometheus + Grafana)
+
+**Fluxo de Dados:**
+1. Cliente faz requisição para encurtar URL
+2. Load balancer direciona para instância disponível
+3. JWT validado (se autenticado)
+4. Serviço de shorten processa e salva no PostgreSQL
+5. Resposta retorna slug curto
+6. Para redirecionamento: Cache Redis consultado primeiro, depois DB se necessário
 
 ## Project setup
 
@@ -147,7 +249,7 @@ Para ativar o pipeline completo, configure no GitHub:
    - `CODECOV_TOKEN`: Token do Codecov (opcional, para relatórios de cobertura)
 
 2. **Container Registry** (já configurado para usar GHCR - GitHub Container Registry):
-   - O workflow usa `ghcr.io/seu-usuario/short-link-teddy`
+   - O workflow usa `ghcr.io/cirebox/short-link-teddy`
    - Permissões automáticas via `GITHUB_TOKEN`
 
 3. **Environments** (Settings → Environments):
@@ -160,18 +262,22 @@ Para ativar o pipeline completo, configure no GitHub:
 - **Produção**: Commits em `main` → Deploy automático em produção
 - **Release**: `git tag v1.0.0 && git push origin v1.0.0` → Release completo
 
-## Deployment
+## Deploy em Produção
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+**Status:** Não foi implementado um deploy em cloud para esta entrega.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+**Soluções Recomendadas:**
+- **Railway**: Deploy direto do GitHub com PostgreSQL integrado
+- **Render**: PaaS com suporte a Docker e PostgreSQL
+- **Vercel**: Para frontend, com API Routes para backend
+- **AWS/GCP/Azure**: Infraestrutura completa com Kubernetes
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+**Passos para Deploy:**
+1. Configurar secrets no GitHub (DATABASE_URL, JWT_SECRET)
+2. Escolher provedor de cloud
+3. Configurar domínio e SSL
+4. Executar migrations do Prisma
+5. Testar endpoints
 
 ## Resources
 
@@ -180,7 +286,6 @@ Check out a few resources that may come in handy when working with NestJS:
 - Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
 - For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
 - To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
 - Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
 - Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
 - To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
