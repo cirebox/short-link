@@ -1,0 +1,47 @@
+# docker-compose.yml
+networks:
+  shortlink-network:
+    driver: bridge
+
+services:
+  db:
+    image: postgres:15
+    container_name: shortlink-postgres
+    environment:
+      POSTGRES_DB: shortlink
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - shortlink-network
+    restart: unless-stopped
+
+  app:
+    container_name: short-link-teddy
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    environment:
+      LOG_FILE: false
+      NODE_ENV: ${NODE_ENV}
+      HTTP_PORT: ${HTTP_PORT}
+      DATABASE_URL: "postgresql://user:password@db:5432/shortlink?schema=public"
+      GRPC_PORT: ${GRPC_PORT}
+      DOCS_USER: ${DOCS_USER}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+    ports:
+      - 3000:3000
+    volumes:
+      - ./:/home/app/short-link-teddy
+      - ./node_modules:/home/app/short-link-teddy/node_modules
+    networks:
+      - shortlink-network
+    depends_on:
+      - db
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
